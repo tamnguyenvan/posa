@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Export YOLO26 pose weights to LiteRT/TFLite and stage Android assets."""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+from pathlib import Path
+
+from ultralytics import YOLO
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Export yolo26n-pose.pt to LiteRT/TFLite format."
+    )
+    parser.add_argument(
+        "--model",
+        default="yolo26n-pose.pt",
+        help="Path or Ultralytics model name to export.",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=640,
+        help="Square input image size for export.",
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Export device passed to Ultralytics.",
+    )
+    parser.add_argument(
+        "--assets-dir",
+        default="app/src/main/assets",
+        help="Android assets directory where .tflite and metadata are copied.",
+    )
+    parser.add_argument(
+        "--output-name",
+        default="yolo26n-pose",
+        help="Base output asset name without extension.",
+    )
+    return parser.parse_args()
+
+
+def find_tflite_file(exported: Path) -> Path:
+    if exported.is_file() and exported.suffix == ".tflite":
+        return exported
+
+    candidates = sorted(exported.rglob("*.tflite"))
+    if not candidates:
+        raise FileNotFoundError(f"LiteRT/TFLite model not found under: {exported}")
+
+    return candidates[0]
+
+
+def main() -> None:
+    args = parse_args()
+    project_root = Path.cwd()
+    assets_dir = (project_root / args.assets_dir).resolve()
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    model = YOLO(args.model)
+    exported = Path(
+        model.export(
+            format="litert",
+            imgsz=args.imgsz,
+            device=args.device,
+        )
+    )
+
+    tflite_path = find_tflite_file(exported)
+    target_tflite = assets_dir / f"{args.output_name}.tflite"
+    shutil.copy2(tflite_path, target_tflite)
+    print(f"Copied {target_tflite}")
+
+    metadata_path = tflite_path.with_name("metadata.yaml")
+    if metadata_path.exists():
+        target_metadata = assets_dir / f"{args.output_name}-litert-metadata.yaml"
+        shutil.copy2(metadata_path, target_metadata)
+        print(f"Copied {target_metadata}")
+
+
+if __name__ == "__main__":
+    main()

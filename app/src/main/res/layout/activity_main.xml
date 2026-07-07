@@ -109,23 +109,44 @@
             android:textColor="@color/white"
             android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/videoStatusText"
+        <LinearLayout
+            android:id="@+id/topCenterControls"
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
+            android:layout_height="wrap_content"
             android:layout_gravity="top|center_horizontal"
-            android:layout_marginTop="22dp"
-            android:background="#99000000"
             android:gravity="center"
-            android:minWidth="128dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:visibility="gone"
-            tools:text="Video 42%"
-            tools:visibility="visible" />
+            android:orientation="vertical"
+            android:paddingTop="16dp">
+
+            <Button
+                android:id="@+id/modelSelectorButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:backgroundTint="#CC111111"
+                android:minWidth="132dp"
+                android:text="@string/model_mediapipe"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/videoStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginTop="6dp"
+                android:background="#99000000"
+                android:gravity="center"
+                android:minWidth="128dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="@color/white"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="Video 42%"
+                tools:visibility="visible" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/switchCameraButton"

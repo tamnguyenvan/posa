@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+/yolo26n-pose.pt
+/yolo26n-pose.tflite
+/yolo26n-pose_executorch_model/

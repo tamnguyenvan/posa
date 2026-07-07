@@ -11,6 +11,11 @@
     <string name="video_preview">Selected video frame preview</string>
     <string name="video_processing">Processing video %1$d%%</string>
     <string name="video_ready">Video ready</string>
+    <string name="model_mediapipe">Model: MediaPipe</string>
+    <string name="model_yolo26">Model: YOLO26</string>
+    <string name="yolo26_unavailable">YOLO26 requires ExecuTorch on arm64-v8a/x86_64 or LiteRT on this app ABI. This device reports: %1$s.</string>
+    <string name="yolo26_model_missing">YOLO26 model asset is missing. Add yolo26n-pose.pte or yolo26n-pose.tflite.</string>
+    <string name="yolo26_fallback">YOLO26 failed. Using MediaPipe instead.</string>
     <string name="hud_fps_empty">FPS\n--</string>
     <string name="hud_spine_empty">Spine\n--</string>
     <string name="hud_safety_empty">Status\nReady</string>

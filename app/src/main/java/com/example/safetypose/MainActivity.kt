@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.SpannableString
@@ -20,6 +21,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -31,6 +33,7 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -46,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var requestPermissionButton: Button
     private lateinit var permissionPickVideoButton: Button
     private lateinit var pickVideoButton: Button
+    private lateinit var modelSelectorButton: Button
     private lateinit var videoStatusText: TextView
     private lateinit var switchCameraButton: Button
     private lateinit var fpsText: TextView
@@ -54,11 +58,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
-    private var poseAnalyzer: PoseAnalyzer? = null
+    private var poseAnalyzer: AutoCloseable? = null
     private var lensFacing = CameraSelector.LENS_FACING_BACK
     private var permissionDeniedOnce = false
     private var openSettingsForCamera = false
     private var inputMode = InputMode.CAMERA
+    private var selectedPoseBackend = PoseBackend.MEDIAPIPE
+    private var currentVideoUri: Uri? = null
     private var videoFuture: Future<*>? = null
     private var videoCancelSignal = AtomicBoolean(false)
 
@@ -95,6 +101,7 @@ class MainActivity : AppCompatActivity() {
 
         bindViews()
         cameraExecutor = Executors.newSingleThreadExecutor()
+        selectInitialPoseBackend()
         updateHud(0f, null, hasPose = false)
 
         requestPermissionButton.setOnClickListener {
@@ -110,6 +117,9 @@ class MainActivity : AppCompatActivity() {
         }
         pickVideoButton.setOnClickListener(pickVideoClickListener)
         permissionPickVideoButton.setOnClickListener(pickVideoClickListener)
+        modelSelectorButton.setOnClickListener {
+            togglePoseBackend()
+        }
 
         switchCameraButton.setOnClickListener {
             if (inputMode == InputMode.VIDEO) {
@@ -156,11 +166,13 @@ class MainActivity : AppCompatActivity() {
         requestPermissionButton = findViewById(R.id.requestPermissionButton)
         permissionPickVideoButton = findViewById(R.id.permissionPickVideoButton)
         pickVideoButton = findViewById(R.id.pickVideoButton)
+        modelSelectorButton = findViewById(R.id.modelSelectorButton)
         videoStatusText = findViewById(R.id.videoStatusText)
         switchCameraButton = findViewById(R.id.switchCameraButton)
         fpsText = findViewById(R.id.fpsText)
         spineText = findViewById(R.id.spineText)
         safetyText = findViewById(R.id.safetyText)
+        updateModelSelectorText()
     }
 
     private fun startCamera() {
@@ -183,18 +195,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val backend = resolveSelectedBackend()
         val analyzer = try {
-            PoseAnalyzer(
-                context = this,
-                onResult = ::handlePoseResult,
-                onError = ::handleAnalyzerError
-            )
-        } catch (error: RuntimeException) {
+            createCameraAnalyzer(backend)
+        } catch (error: Throwable) {
             handleAnalyzerError(error.message ?: "Unable to initialize pose detector")
             return
         }
         poseAnalyzer?.close()
-        poseAnalyzer = analyzer
+        poseAnalyzer = analyzer as AutoCloseable
 
         val targetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
         val resolutionSelector = ResolutionSelector.Builder()
@@ -217,7 +226,7 @@ class MainActivity : AppCompatActivity() {
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also { analysis ->
-                analysis.setAnalyzer(cameraExecutor, poseAnalyzer!!)
+                analysis.setAnalyzer(cameraExecutor, analyzer)
             }
 
         val cameraSelector = CameraSelector.Builder()
@@ -261,6 +270,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun processVideoUri(uri: Uri) {
         switchToVideoMode()
+        currentVideoUri = uri
+        val backend = resolveSelectedBackend()
 
         val cancelSignal = AtomicBoolean(false)
         videoCancelSignal = cancelSignal
@@ -268,6 +279,7 @@ class MainActivity : AppCompatActivity() {
             VideoPoseProcessor.process(
                 context = applicationContext,
                 uri = uri,
+                poseBackend = backend,
                 isCancelled = { cancelSignal.get() || Thread.currentThread().isInterrupted },
                 onFrame = ::handleVideoFrame,
                 onComplete = {
@@ -290,27 +302,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleVideoFrame(frame: VideoFrameResult) {
-        val landmarks = frame.result.landmarks().firstOrNull().orEmpty()
-        val hasPose = landmarks.isNotEmpty() && SafetyLogic.hasVisibleRequiredLandmarks(landmarks)
-        val safetyState = if (hasPose) {
-            safetyStabilizer.update(SafetyLogic.evaluate(landmarks))
-        } else {
-            safetyStabilizer.reset()
-            null
-        }
+        val frameState = evaluateFrameLandmarks(frame.landmarks)
 
         runOnUiThread {
             if (inputMode != InputMode.VIDEO) return@runOnUiThread
 
             videoPreviewImage.setImageBitmap(frame.bitmap)
             overlayView.updatePose(
-                landmarks = landmarks,
-                safetyState = safetyState,
+                landmarks = frame.landmarks,
+                safetyState = frameState.safetyState,
                 imageWidth = frame.imageWidth,
                 imageHeight = frame.imageHeight,
                 mirrorHorizontally = false
             )
-            updateHud(frame.processingFps, safetyState, hasPose)
+            updateHud(frame.processingFps, frameState.safetyState, frameState.hasPose)
             videoStatusText.text = getString(R.string.video_processing, frame.progressPercent)
         }
     }
@@ -343,6 +348,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchToCameraMode() {
         inputMode = InputMode.CAMERA
+        currentVideoUri = null
         cancelVideoProcessing()
         safetyStabilizer.reset()
 
@@ -374,7 +380,130 @@ class MainActivity : AppCompatActivity() {
     private fun handlePoseResult(frame: PoseFrameResult) {
         if (inputMode != InputMode.CAMERA) return
 
-        val landmarks = frame.result.landmarks().firstOrNull().orEmpty()
+        handleCameraLandmarks(
+            landmarks = frame.landmarks,
+            imageWidth = frame.imageWidth,
+            imageHeight = frame.imageHeight,
+            fps = frame.fps
+        )
+    }
+
+    private fun handleYoloPoseResult(frame: YoloPoseFrameResult) {
+        if (inputMode != InputMode.CAMERA) return
+
+        handleCameraLandmarks(
+            landmarks = frame.landmarks,
+            imageWidth = frame.imageWidth,
+            imageHeight = frame.imageHeight,
+            fps = frame.fps
+        )
+    }
+
+    private fun handleCameraLandmarks(
+        landmarks: List<NormalizedLandmark>,
+        imageWidth: Int,
+        imageHeight: Int,
+        fps: Float
+    ) {
+        val frameState = evaluateFrameLandmarks(landmarks)
+
+        runOnUiThread {
+            if (inputMode != InputMode.CAMERA) return@runOnUiThread
+
+            overlayView.updatePose(
+                landmarks = landmarks,
+                safetyState = frameState.safetyState,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+                mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT
+            )
+            updateHud(fps, frameState.safetyState, frameState.hasPose)
+        }
+    }
+
+    private fun createCameraAnalyzer(backend: PoseBackend): ImageAnalysis.Analyzer {
+        return when (backend) {
+            PoseBackend.MEDIAPIPE -> PoseAnalyzer(
+                context = this,
+                onResult = ::handlePoseResult,
+                onError = ::handleAnalyzerError
+            )
+
+            PoseBackend.YOLO26 -> YoloPoseAnalyzer(
+                context = this,
+                onResult = ::handleYoloPoseResult,
+                onError = ::handleAnalyzerError
+            )
+        }
+    }
+
+    private fun togglePoseBackend() {
+        val nextBackend = when (selectedPoseBackend) {
+            PoseBackend.MEDIAPIPE -> PoseBackend.YOLO26
+            PoseBackend.YOLO26 -> PoseBackend.MEDIAPIPE
+        }
+
+        if (nextBackend == PoseBackend.YOLO26) {
+            val errorMessage = YoloPoseDetector.availabilityError(this)
+            if (errorMessage != null) {
+                Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
+                return
+            }
+        }
+
+        selectedPoseBackend = nextBackend
+        safetyStabilizer.reset()
+        updateModelSelectorText()
+        overlayView.updatePose(
+            landmarks = emptyList(),
+            safetyState = null,
+            imageWidth = 0,
+            imageHeight = 0,
+            mirrorHorizontally = false
+        )
+        updateHud(0f, null, hasPose = false)
+
+        when (inputMode) {
+            InputMode.CAMERA -> bindCameraUseCases()
+            InputMode.VIDEO -> currentVideoUri?.let(::processVideoUri)
+        }
+    }
+
+    private fun resolveSelectedBackend(): PoseBackend {
+        if (selectedPoseBackend == PoseBackend.YOLO26) {
+            val errorMessage = YoloPoseDetector.availabilityError(this)
+            if (errorMessage != null) {
+                Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show()
+                selectedPoseBackend = PoseBackend.MEDIAPIPE
+                updateModelSelectorText()
+            }
+        }
+        return selectedPoseBackend
+    }
+
+    private fun selectInitialPoseBackend() {
+        if (
+            selectedPoseBackend == PoseBackend.MEDIAPIPE &&
+            !isMediaPipeRuntimeSupported() &&
+            YoloPoseDetector.availabilityError(this) == null
+        ) {
+            selectedPoseBackend = PoseBackend.YOLO26
+            updateModelSelectorText()
+        }
+    }
+
+    private fun isMediaPipeRuntimeSupported(): Boolean {
+        return Build.SUPPORTED_ABIS.any { abi -> abi in MEDIAPIPE_SUPPORTED_ABIS }
+    }
+
+    private fun updateModelSelectorText() {
+        modelSelectorButton.text = when (selectedPoseBackend) {
+            PoseBackend.MEDIAPIPE -> getString(R.string.model_mediapipe)
+            PoseBackend.YOLO26 -> getString(R.string.model_yolo26)
+        }
+    }
+
+    private fun evaluateFrameLandmarks(landmarks: List<NormalizedLandmark>): FramePoseState {
         val hasPose = landmarks.isNotEmpty() && SafetyLogic.hasVisibleRequiredLandmarks(landmarks)
         val safetyState = if (hasPose) {
             safetyStabilizer.update(SafetyLogic.evaluate(landmarks))
@@ -382,23 +511,21 @@ class MainActivity : AppCompatActivity() {
             safetyStabilizer.reset()
             null
         }
-
-        runOnUiThread {
-            if (inputMode != InputMode.CAMERA) return@runOnUiThread
-
-            overlayView.updatePose(
-                landmarks = landmarks,
-                safetyState = safetyState,
-                imageWidth = frame.imageWidth,
-                imageHeight = frame.imageHeight,
-                mirrorHorizontally = lensFacing == CameraSelector.LENS_FACING_FRONT
-            )
-            updateHud(frame.fps, safetyState, hasPose)
-        }
+        return FramePoseState(hasPose = hasPose, safetyState = safetyState)
     }
 
     private fun handleAnalyzerError(message: String) {
         runOnUiThread {
+            if (selectedPoseBackend == PoseBackend.YOLO26) {
+                selectedPoseBackend = PoseBackend.MEDIAPIPE
+                updateModelSelectorText()
+                Toast.makeText(this, getString(R.string.yolo26_fallback), Toast.LENGTH_LONG).show()
+                if (inputMode == InputMode.CAMERA && hasCameraPermission()) {
+                    bindCameraUseCases()
+                }
+                return@runOnUiThread
+            }
+
             updateHud(0f, null, hasPose = false)
             permissionPanel.visibility = View.VISIBLE
             permissionMessage.text = message
@@ -484,6 +611,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun color(colorRes: Int): Int = ContextCompat.getColor(this, colorRes)
+
+    private data class FramePoseState(
+        val hasPose: Boolean,
+        val safetyState: SafetyState?
+    )
+
+    private companion object {
+        val MEDIAPIPE_SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86")
+    }
 
     private enum class InputMode {
         CAMERA,

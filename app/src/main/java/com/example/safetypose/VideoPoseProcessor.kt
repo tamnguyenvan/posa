@@ -9,11 +9,11 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
-import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
@@ -22,7 +22,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 data class VideoFrameResult(
-    val result: PoseLandmarkerResult,
+    val landmarks: List<NormalizedLandmark>,
     val bitmap: Bitmap,
     val imageWidth: Int,
     val imageHeight: Int,
@@ -34,17 +34,22 @@ object VideoPoseProcessor {
     fun process(
         context: Context,
         uri: Uri,
+        poseBackend: PoseBackend,
         isCancelled: () -> Boolean,
         onFrame: (VideoFrameResult) -> Unit,
         onComplete: () -> Unit,
         onError: (String) -> Unit
     ) {
         var landmarker: PoseLandmarker? = null
+        var yoloDetector: YoloPoseDetector? = null
         var sourceHandle: VideoSourceHandle? = null
         val retriever = MediaMetadataRetriever()
 
         try {
-            landmarker = createPoseLandmarkerWithFallback(context)
+            when (poseBackend) {
+                PoseBackend.MEDIAPIPE -> landmarker = createPoseLandmarkerWithFallback(context)
+                PoseBackend.YOLO26 -> yoloDetector = YoloPoseDetector(context)
+            }
             sourceHandle = retriever.setDataSourceFromUri(context, uri)
 
             val metadataDurationMs = retriever.extractLong(MediaMetadataRetriever.METADATA_KEY_DURATION)
@@ -72,8 +77,21 @@ object VideoPoseProcessor {
                         .scaleDown(MAX_FRAME_EDGE)
                         .rotate(rotationDegrees)
                         .toArgb8888()
-                    val mpImage = BitmapImageBuilder(bitmap).build()
-                    val result = landmarker.detectForVideo(mpImage, timestampUs / 1000L)
+                    val landmarks = when (poseBackend) {
+                        PoseBackend.MEDIAPIPE -> {
+                            val detector = landmarker ?: error("MediaPipe detector is not initialized")
+                            val mpImage = BitmapImageBuilder(bitmap).build()
+                            detector.detectForVideo(mpImage, timestampUs / 1000L)
+                                .landmarks()
+                                .firstOrNull()
+                                .orEmpty()
+                        }
+
+                        PoseBackend.YOLO26 -> {
+                            val detector = yoloDetector ?: error("YOLO26 detector is not initialized")
+                            detector.detect(bitmap)
+                        }
+                    }
                     val progress = if (durationUs > 0L) {
                         ((timestampUs * 100L) / durationUs).coerceIn(0L, 100L).toInt()
                     } else {
@@ -82,7 +100,7 @@ object VideoPoseProcessor {
 
                     onFrame(
                         VideoFrameResult(
-                            result = result,
+                            landmarks = landmarks,
                             bitmap = bitmap,
                             imageWidth = bitmap.width,
                             imageHeight = bitmap.height,
@@ -104,12 +122,13 @@ object VideoPoseProcessor {
             if (!isCancelled()) {
                 onComplete()
             }
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             if (!isCancelled()) {
                 onError(error.videoErrorMessage())
             }
         } finally {
             landmarker?.close()
+            yoloDetector?.close()
             retriever.release()
             sourceHandle?.close()
         }
@@ -208,7 +227,7 @@ object VideoPoseProcessor {
         return cacheFile
     }
 
-    private fun Exception.videoErrorMessage(): String {
+    private fun Throwable.videoErrorMessage(): String {
         val details = message?.takeIf { it.isNotBlank() }
         return if (details == null) {
             "Unable to read this video. Try a local MP4/H.264 video."

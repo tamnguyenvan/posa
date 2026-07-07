@@ -32,7 +32,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86")
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
             isUniversalApk = false
         }
     }
@@ -51,6 +51,8 @@ dependencies {
     implementation(libs.camerax.core)
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.view)
+    implementation(libs.executorch.android)
+    implementation(libs.litert)
     implementation(libs.mediapipe.tasks.vision)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)

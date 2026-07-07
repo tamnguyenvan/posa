@@ -6,16 +6,16 @@ import android.graphics.Matrix
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
-import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 data class PoseFrameResult(
-    val result: PoseLandmarkerResult,
+    val landmarks: List<NormalizedLandmark>,
     val imageWidth: Int,
     val imageHeight: Int,
     val fps: Float
@@ -82,7 +82,7 @@ class PoseAnalyzer(
                 isProcessing.set(false)
                 onResult(
                     PoseFrameResult(
-                        result = result,
+                        landmarks = result.landmarks().firstOrNull().orEmpty(),
                         imageWidth = input.width,
                         imageHeight = input.height,
                         fps = latestFps.get()
