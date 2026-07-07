@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="hud_background">#FF111111</color>
+    <color name="hud_secondary">#CCFFFFFF</color>
+    <color name="safety_green">#4CAF50</color>
+    <color name="safety_amber">#FF9800</color>
+    <color name="safety_red">#F44336</color>
+</resources>

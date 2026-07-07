@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Safety Pose</string>
+    <string name="camera_permission_title">Camera required</string>
+    <string name="camera_permission_message">Safety Pose runs pose estimation on-device from the live camera preview. Grant camera access to start detection.</string>
+    <string name="grant_camera">Grant camera</string>
+    <string name="open_settings">Open settings</string>
+    <string name="switch_camera">Flip</string>
+    <string name="live_camera">Live</string>
+    <string name="pick_video">Video</string>
+    <string name="choose_video_instead">Choose video instead</string>
+    <string name="video_preview">Selected video frame preview</string>
+    <string name="video_processing">Processing video %1$d%%</string>
+    <string name="video_ready">Video ready</string>
+    <string name="hud_fps_empty">FPS\n--</string>
+    <string name="hud_spine_empty">Spine\n--</string>
+    <string name="hud_safety_empty">Status\nReady</string>
+</resources>
